@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 运行时产物
+videodl_outputs/
+logs/
+*.log
+
+# 本地配置与缓存(含密钥,绝不入库)
+config.yaml
+config.local.yaml
+config.*.yaml
+!config.example.yaml
+cookies.txt
+*.cookies
+cache/
+*-sa.json          # service account / 任何密钥 json
+.总裁速览/
+
+# 内部开发笔记(不公开)
+PROGRESS.md
+
+# 测试输出
+/tmp/
+总裁速览_PRD_v1.md

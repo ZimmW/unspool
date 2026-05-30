@@ -1,0 +1,92 @@
+# 总裁速览 配置示例
+# 复制到 ~/.总裁速览/config.yaml 并填写真实凭证
+
+llm:
+  # 【默认复用 agent 的模型】跑在 agent(Claude Code / OpenClaw 等)里时,
+  # 整段 llm 可以留空 —— 会自动用环境里的 ANTHROPIC_API_KEY(即 agent 的 Claude)。
+  # 想单独指定模型(省钱/换厂商)时,才填下面:
+  #
+  # provider: anthropic | deepseek | openai(及任何 OpenAI 兼容端点)
+  # - anthropic:质量最稳(尤其守 negative constraint)
+  # - deepseek:中文长文本性价比高,实测够用
+  provider: deepseek
+  api_key: sk-xxx
+  model: deepseek-chat
+  # base_url: https://api.deepseek.com/v1   # OpenAI 兼容端点可显式指定
+  #
+  # 切 Anthropic 示例:
+  # provider: anthropic
+  # api_key: sk-ant-xxx
+  # model: claude-sonnet-4-5
+
+asr:
+  # 只在处理"无现成字幕"的内容时用到(把语音转文字)。去哪申请 key:
+  #   Groq    免费额度、快,最适合上手   → https://console.groq.com/keys
+  #   OpenAI  最稳、全球可用              → https://platform.openai.com/api-keys
+  #   Gemini  Google,免费额度            → https://aistudio.google.com/apikey
+  #   Qwen    阿里 Qwen3-ASR,中文强      → 阿里云百炼 https://bailian.console.aliyun.com
+  #   MiMo    小米,中文友好(默认)      → 小米开放平台 https://api.xiaomimimo.com
+  #
+  # provider 决定协议(脚本自动选,无需关心):
+  #   mimo / gemini              → multimodal_chat(/v1/chat/completions + base64 音频)
+  #   openai / groq / fireworks / qwen → openai_transcriptions(标准 Whisper 接口)
+  provider: mimo
+  api_key: sk-mimo-xxx
+  base_url: https://api.xiaomimimo.com/v1
+  model: mimo-v2-omni       # MiMo 用 mimo-v2-omni
+  enable_speaker_diarization: true
+
+  # 上手最简单:换成 Groq(免费额度 + 标准 Whisper):
+  # provider: groq
+  # api_key: gsk-xxx
+  # base_url: https://api.groq.com/openai/v1
+  # model: whisper-large-v3-turbo
+
+  # 切阿里 Qwen3-ASR(中文强,DashScope OpenAI 兼容):
+  # provider: qwen
+  # api_key: sk-xxx
+  # base_url: https://dashscope.aliyuncs.com/compatible-mode/v1   # 国际版用 dashscope-intl
+  # model: qwen3-asr-flash
+
+output:
+  local:
+    enabled: true
+    path: ~/Documents/总裁速览/
+    # 在 .md 顶端加 YAML frontmatter(平台/时长/日期/原链接),
+    # 这样 Obsidian 的 Properties / Dataview 能筛选检索。默认开;
+    # 用纯文本编辑器看嫌碍眼可设 false。
+    frontmatter: true
+    # 想直接进 Obsidian:把 path 指到你的 vault 里某个文件夹即可。
+  feishu:                   # 飞书(可选):成飞书云文档,适合团队协作沉淀
+    enabled: false          # 填好下面三项后改 true
+    app_id: cli_xxx
+    app_secret: xxx
+    folder_token: ""        # 留空则放"我的空间"根目录
+    tenant_domain: feishu.cn  # 拼接最终 URL 用,自有租户域名
+  notion:                   # Notion(可选):每篇写入一个数据库,带平台/时长/日期属性
+    enabled: false
+    token: secret_xxx       # Notion internal integration token
+    # 二选一:database_id(写入已有数据库)或 parent_page_id(自动建库并缓存)
+    database_id: ""
+    parent_page_id: ""      # 用于自动建库;需把该页面共享给 integration
+    mode: database          # database(推荐,可筛选检索)| page(纯子页面)
+
+# 抖音/TikTok 解析后端:evil0ctal(默认)| joeanamier(备选,日活维护)
+# 两者都需要对应 vendor 安装(见 README)
+douyin:
+  backend: evil0ctal
+
+cookies:
+  # 处理 B站/抖音/小红书等需 cookie 的平台。
+  # 推荐:from_browser —— yt-dlp 直接读你浏览器里已有的 cookies,
+  # 你只需要在 Chrome 里访问过这些站(不用登录,只需有 anti-bot cookies)。
+  from_browser: chrome      # chrome | safari | firefox | edge | brave | chromium
+  browser_profile: ""       # 可选:指定 profile 名(如 "Default"、"Profile 1"),空=默认
+  # 备选(CI/服务器场景,需手动导出 cookies.txt):
+  cookies_file: ""
+
+# 长内容生成策略:文档按时间段切片(默认每 30 分钟一段)分别生成,
+# 各段内由 LLM 自行切章节,避免单次输出撞 token 上限被截断。
+# (此项为保留参数,当前切段固定 30 分钟,无需改动)
+long_content:
+  per_chapter_threshold_minutes: 60

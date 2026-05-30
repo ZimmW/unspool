@@ -1,0 +1,5 @@
+yt-dlp>=2024.1.1
+anthropic>=0.40.0     # 仅在 LLM 用 Anthropic 时需要(含默认复用 agent 模型)
+openai>=1.40.0        # OpenAI 兼容 LLM(DeepSeek 等)+ Whisper 系 ASR
+PyYAML>=6.0
+# 飞书 / Notion 输出走标准库 urllib,无需额外依赖
