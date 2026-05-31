@@ -19,6 +19,38 @@ Long videos and podcasts are rich ore — and time sinks: you **must listen line
 
 > Core principle: **restructure, don't compress.** No cherry-picking, no TL;DR, no subjective scoring — just turn linear content into dense, chaptered bullet notes.
 
+## How it differs from a traditional AI summary
+
+| | Traditional AI summary | Unspool |
+|---|---|---|
+| Core action | **Compress** — picks what it thinks matters | **Restructure** — re-lays everything into a scannable shape |
+| Information | Subjectively filtered, lots of detail lost | Nothing filtered (only ads removed) |
+| Form | A paragraph / a few TL;DR bullets | Chapters + timestamps + tables + nested bullets |
+| Subjective input | Yes: scoring, "highlights", opinions | None: objective information only |
+| Replace the original? | No, only gives you the gist | Close: the details are there too, just skim |
+| Afterwards | A blob of text, read once and gone | Lands in Obsidian/Lark/Notion — searchable, compounding |
+
+**Same interview, two outputs:**
+
+Traditional summary (almost every actionable detail is gone):
+
+> The guest recapped the company's funding history, compared open vs. closed-source paths, and was optimistic about the future of scaling laws.
+
+Unspool (excerpt — dense and scannable):
+
+```
+## Funding history [12:30-18:40]
+- 2021 seed: led by Sequoia, $X
+- 2023 Series A: valuation $Y → funds a self-built training cluster
+
+## Open vs. closed source [18:40-26:10]
+| Dimension | Open source | Closed source |
+|---|---|---|
+| Capability | behind the frontier | leading |
+| Cost | self-hosted infra | pay-per-use, pricey |
+| Control | self-deployable | vendor-dependent |
+```
+
 ## Supported platforms
 
 | Platform | How | Notes |
