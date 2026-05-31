@@ -126,9 +126,23 @@ def _table_node(rows: list[list[str]]) -> dict:
 
 # ── Markdown → 节点树 ─────────────────────────────────────────────
 
+def _strip_frontmatter(md: str) -> str:
+    """剥离开头的 YAML frontmatter(--- ... ---)。
+
+    本地输出会给 .md 加 frontmatter 供 Obsidian 用;若这种内容被原样喂给
+    飞书(飞书不认 frontmatter,会渲染成可见文字),在此防御性剥离。
+    """
+    lines = md.splitlines()
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                return "\n".join(lines[i + 1:]).lstrip("\n")
+    return md
+
+
 def _md_to_nodes(markdown: str) -> tuple[str, list[dict]]:
     """返回 (文档标题, 顶层节点列表)。第一行 # 标题作 doc title。"""
-    lines = markdown.splitlines()
+    lines = _strip_frontmatter(markdown).splitlines()
     title = "总裁速览文档"
     top: list[dict] = []
     # bullet 嵌套栈:[(indent, node), ...]

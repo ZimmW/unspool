@@ -62,8 +62,22 @@ def _node(kind: str, **kw) -> dict:
     return kw
 
 
+def _strip_frontmatter(md: str) -> str:
+    """剥离开头的 YAML frontmatter(--- ... ---)。
+
+    本地输出会给 .md 加 frontmatter 供 Obsidian 用;若这种内容被原样喂给
+    Notion(--- 会变分割线、平台: x 变段落),在此防御性剥离。
+    """
+    lines = md.splitlines()
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                return "\n".join(lines[i + 1:]).lstrip("\n")
+    return md
+
+
 def _md_to_nodes(markdown: str) -> tuple[str, list[dict]]:
-    lines = markdown.splitlines()
+    lines = _strip_frontmatter(markdown).splitlines()
     title = "总裁速览文档"
     top: list[dict] = []
     stack: list[tuple[int, dict]] = []   # bullet/ordered 嵌套栈
