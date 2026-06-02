@@ -39,6 +39,8 @@ PROTOCOL_MAP: dict[str, str] = {
 
 # multimodal_chat 协议下单次请求音频时长上限(秒)。超出则 ffmpeg 切片。
 MULTIMODAL_CHUNK_SECONDS = 300
+# 分片失败后自适应降片重跑的下限:切到这个长度仍失败才标缺口。
+MULTIMODAL_MIN_CHUNK_SECONDS = 60
 # 并发上限:chunk 间互相独立,可并发请求。太高会触发 rate limit(429)
 # 或连接过载(connection error)。2 比 3 更稳,长任务尤其明显。
 MULTIMODAL_MAX_WORKERS = 2
@@ -137,6 +139,7 @@ def _transcribe_multimodal_chat(audio_path: Path, cfg: dict[str, Any]) -> Transc
     n = len(chunks)
     results: dict[int, tuple[list[Segment], bool]] = {}
     failed: list[int] = []
+    gapped: list[int] = []
     workers = min(MULTIMODAL_MAX_WORKERS, n)
     print(f"      并发 workers={workers}", flush=True)
     try:
@@ -160,28 +163,17 @@ def _transcribe_multimodal_chat(audio_path: Path, cfg: dict[str, Any]) -> Transc
                 done += 1
                 print(f"      [chunk {idx+1}/{n}] ✓ ({done}/{n} 完成)", flush=True)
 
-        # 第二轮:对失败分片串行重试(无并发压力,瞬时故障常能恢复)
+        # 第二轮:失败分片自适应降片重跑 —— 整片再试,失败就切更小再试,
+        # 直到成功或切到下限;仅切到下限仍失败的最小片才标缺口。
         if failed:
-            print(f"      ⚠ {len(failed)} 段失败,串行重试一轮…", flush=True)
-            still: list[int] = []
+            print(f"      ⚠ {len(failed)} 段失败,降片重跑…", flush=True)
             for idx in sorted(failed):
                 p, offset = chunks[idx]
-                try:
-                    results[idx] = _parse_freeform_transcript(
-                        _multimodal_call(client, model, p, diarize), offset)
-                    print(f"      [chunk {idx+1}] 重试成功", flush=True)
-                except Exception as e:
-                    print(f"      [chunk {idx+1}] 重试仍失败: {e}", flush=True)
-                    still.append(idx)
-            failed = still
-
-        # 仍失败的分片:插入显式缺口标记,绝不静默丢内容
-        for idx in failed:
-            offset = chunks[idx][1]
-            a, b = _mmss(offset), _mmss(offset + MULTIMODAL_CHUNK_SECONDS)
-            gap = Segment(start=offset, end=offset + MULTIMODAL_CHUNK_SECONDS,
-                          text=f"[⚠ 本段 ASR 失败,约 {a}–{b} 的内容缺失]")
-            results[idx] = ([gap], False)
+                segs, sp = _transcribe_segment_adaptive(
+                    client, model, p, offset, diarize)
+                results[idx] = (segs, sp)
+                if any(s.text.startswith("[⚠") for s in segs):
+                    gapped.append(idx)
     finally:
         if n > 1:
             for chunk_path, _ in chunks:
@@ -199,10 +191,10 @@ def _transcribe_multimodal_chat(audio_path: Path, cfg: dict[str, Any]) -> Transc
         if fs:
             has_speakers = True
 
-    if failed:
-        windows = ", ".join(_mmss(chunks[i][1]) for i in sorted(failed))
-        print(f"      ⚠⚠ 共 {len(failed)}/{n} 段 ASR 最终失败,文档不完整;"
-              f"缺失起点:{windows}(已在正文标注)", flush=True)
+    if gapped:
+        windows = ", ".join(_mmss(chunks[i][1]) for i in sorted(gapped))
+        print(f"      ⚠⚠ 仍有 {len(gapped)}/{n} 段存在 ASR 缺口(降片重跑也救不回),"
+              f"文档已在正文标注;起点:{windows}", flush=True)
 
     if not all_segments:
         raise RuntimeError("ASR 未返回任何 transcript 段")
@@ -215,6 +207,44 @@ def _mmss(seconds: float) -> str:
     h, r = divmod(s, 3600)
     m, sec = divmod(r, 60)
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+
+
+def _transcribe_segment_adaptive(client, model: str, path: Path, global_offset: int,
+                                 diarize: bool,
+                                 floor: int = MULTIMODAL_MIN_CHUNK_SECONDS,
+                                 ) -> tuple[list[Segment], bool]:
+    """转写一个分片;失败就切更小递归重试,直到成功或切到下限。
+
+    切到 floor 仍失败的最小片才插入缺口标记。返回 (segments, has_speakers),
+    segments 里可能含缺口标记。能救的尽量救回,救不回的诚实标注。
+    """
+    try:
+        return _parse_freeform_transcript(
+            _multimodal_call(client, model, path, diarize), global_offset)
+    except Exception as e:
+        dur = _probe_duration(path)
+        sub_len = max(floor, (int(dur) + 1) // 2)
+        subs = _split_audio(path, sub_len) if dur > floor else [(path, 0)]
+        if len(subs) <= 1:           # 已无法再切小 → 诚实标缺口
+            a, b = _mmss(global_offset), _mmss(global_offset + dur)
+            print(f"      [缺口] {a}–{b} 最小片仍失败:{str(e)[:50]}", flush=True)
+            return ([Segment(start=global_offset, end=global_offset + dur,
+                             text=f"[⚠ 本段 ASR 失败,约 {a}–{b} 的内容缺失]")], False)
+        print(f"      [降片] {_mmss(global_offset)}(~{int(dur)}s)失败 → "
+              f"切 ~{sub_len}s × {len(subs)} 再试", flush=True)
+        all_segs: list[Segment] = []
+        any_sp = False
+        for subpath, rel in subs:
+            segs, sp = _transcribe_segment_adaptive(
+                client, model, subpath, global_offset + rel, diarize, floor)
+            all_segs.extend(segs)
+            any_sp = any_sp or sp
+            if subpath != path:      # 只清理 _split_audio 新建的子文件
+                try:
+                    subpath.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        return (all_segs, any_sp)
 
 
 def _multimodal_call(client, model: str, audio_path: Path, diarize: bool) -> str:
