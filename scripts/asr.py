@@ -39,8 +39,9 @@ PROTOCOL_MAP: dict[str, str] = {
 
 # multimodal_chat 协议下单次请求音频时长上限(秒)。超出则 ffmpeg 切片。
 MULTIMODAL_CHUNK_SECONDS = 300
-# 并发上限:chunk 间互相独立,可并发请求。太高会触发 rate limit(429)。
-MULTIMODAL_MAX_WORKERS = 3
+# 并发上限:chunk 间互相独立,可并发请求。太高会触发 rate limit(429)
+# 或连接过载(connection error)。2 比 3 更稳,长任务尤其明显。
+MULTIMODAL_MAX_WORKERS = 2
 # 单 chunk 遇 429/限流时的重试次数与退避基数(秒)
 MULTIMODAL_MAX_RETRIES = 5
 MULTIMODAL_BACKOFF_BASE = 4
@@ -133,32 +134,56 @@ def _transcribe_multimodal_chat(audio_path: Path, cfg: dict[str, Any]) -> Transc
           flush=True)
 
     chunks = _split_audio(audio_path, MULTIMODAL_CHUNK_SECONDS)
-    # 并发跑各 chunk(独立,顺序无关)
+    n = len(chunks)
     results: dict[int, tuple[list[Segment], bool]] = {}
-    workers = min(MULTIMODAL_MAX_WORKERS, len(chunks))
+    failed: list[int] = []
+    workers = min(MULTIMODAL_MAX_WORKERS, n)
     print(f"      并发 workers={workers}", flush=True)
     try:
+        # 第一轮:并发
         with ThreadPoolExecutor(max_workers=workers) as ex:
             futures = {
-                ex.submit(_multimodal_call, client, model, p, diarize): (i, off)
+                ex.submit(_multimodal_call, client, model, p, diarize): i
                 for i, (p, off) in enumerate(chunks)
             }
             done = 0
             for fut in as_completed(futures):
-                idx, offset = futures[fut]
+                idx = futures[fut]
+                offset = chunks[idx][1]
                 try:
                     text = fut.result()
                 except Exception as e:
                     print(f"      [chunk {idx+1}] 失败: {e}", flush=True)
-                    results[idx] = ([], False)
+                    failed.append(idx)
                     continue
-                segs, fs = _parse_freeform_transcript(text, offset)
-                results[idx] = (segs, fs)
+                results[idx] = _parse_freeform_transcript(text, offset)
                 done += 1
-                print(f"      [chunk {idx+1}/{len(chunks)}] ✓ ({done}/{len(chunks)} 完成)",
-                      flush=True)
+                print(f"      [chunk {idx+1}/{n}] ✓ ({done}/{n} 完成)", flush=True)
+
+        # 第二轮:对失败分片串行重试(无并发压力,瞬时故障常能恢复)
+        if failed:
+            print(f"      ⚠ {len(failed)} 段失败,串行重试一轮…", flush=True)
+            still: list[int] = []
+            for idx in sorted(failed):
+                p, offset = chunks[idx]
+                try:
+                    results[idx] = _parse_freeform_transcript(
+                        _multimodal_call(client, model, p, diarize), offset)
+                    print(f"      [chunk {idx+1}] 重试成功", flush=True)
+                except Exception as e:
+                    print(f"      [chunk {idx+1}] 重试仍失败: {e}", flush=True)
+                    still.append(idx)
+            failed = still
+
+        # 仍失败的分片:插入显式缺口标记,绝不静默丢内容
+        for idx in failed:
+            offset = chunks[idx][1]
+            a, b = _mmss(offset), _mmss(offset + MULTIMODAL_CHUNK_SECONDS)
+            gap = Segment(start=offset, end=offset + MULTIMODAL_CHUNK_SECONDS,
+                          text=f"[⚠ 本段 ASR 失败,约 {a}–{b} 的内容缺失]")
+            results[idx] = ([gap], False)
     finally:
-        if len(chunks) > 1:
+        if n > 1:
             for chunk_path, _ in chunks:
                 try:
                     chunk_path.unlink(missing_ok=True)
@@ -168,16 +193,28 @@ def _transcribe_multimodal_chat(audio_path: Path, cfg: dict[str, Any]) -> Transc
     # 按 chunk 顺序拼接
     all_segments: list[Segment] = []
     has_speakers = False
-    for i in range(len(chunks)):
+    for i in range(n):
         segs, fs = results.get(i, ([], False))
         all_segments.extend(segs)
         if fs:
             has_speakers = True
 
+    if failed:
+        windows = ", ".join(_mmss(chunks[i][1]) for i in sorted(failed))
+        print(f"      ⚠⚠ 共 {len(failed)}/{n} 段 ASR 最终失败,文档不完整;"
+              f"缺失起点:{windows}(已在正文标注)", flush=True)
+
     if not all_segments:
         raise RuntimeError("ASR 未返回任何 transcript 段")
 
     return Transcript(segments=all_segments, has_speakers=has_speakers)
+
+
+def _mmss(seconds: float) -> str:
+    s = int(seconds)
+    h, r = divmod(s, 3600)
+    m, sec = divmod(r, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
 
 
 def _multimodal_call(client, model: str, audio_path: Path, diarize: bool) -> str:
@@ -218,14 +255,17 @@ def _multimodal_call(client, model: str, audio_path: Path, diarize: bool) -> str
         except Exception as e:
             last_err = e
             # 429 / 限流 / 5xx → 退避重试;其他错误直接抛
-            msg = str(e)
+            msg = str(e).lower()
+            # 瞬时故障(限流 / 超时 / 连接错误 / 5xx)→ 退避重试
             retriable = ("429" in msg or "limitation" in msg
-                         or "Too many requests" in msg or "rate" in msg.lower()
-                         or "timeout" in msg.lower() or "503" in msg or "502" in msg)
+                         or "too many requests" in msg or "rate" in msg
+                         or "timeout" in msg or "timed out" in msg
+                         or "connection" in msg or "503" in msg or "502" in msg)
             if not retriable or attempt == MULTIMODAL_MAX_RETRIES - 1:
                 raise
             wait = MULTIMODAL_BACKOFF_BASE * (2 ** attempt)
-            print(f"      [限流重试] {wait}s 后重试(第 {attempt+1} 次)", flush=True)
+            print(f"      [重试] {wait}s 后重试(第 {attempt+1} 次):{str(e)[:60]}",
+                  flush=True)
             time.sleep(wait)
     raise last_err  # 不会到这,保险
 
