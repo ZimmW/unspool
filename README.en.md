@@ -246,7 +246,8 @@ Lark and Notion are **both recommended** (pick the ecosystem you live in), singl
        app_id: cli_xxx
        app_secret: xxx
        folder_token: ""          # empty = root of "My Space"
-       tenant_domain: your-tenant # like abcd1234, used to build the final URL
+       tenant_domain: abcd1234   # your tenant subdomain (the <this> in
+                                 # https://<this>.feishu.cn when you open any doc); full domain also OK
    ```
 
 ### Notion (recommended — builds a searchable library)

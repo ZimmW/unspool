@@ -246,7 +246,8 @@ python -m scripts.run "https://v.douyin.com/xxx/"
        app_id: cli_xxx
        app_secret: xxx
        folder_token: ""          # 留空 = 放"我的空间"根目录
-       tenant_domain: 你的租户    # 形如 abcd1234,用于拼最终 URL
+       tenant_domain: abcd1234   # 你的租户子域名(打开任意飞书文档,URL 里
+                                 # https://<这段>.feishu.cn);填完整域名也行,留空用 feishu.cn
    ```
 
 ### Notion(推荐——可累积成可检索的资料库)

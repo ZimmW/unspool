@@ -62,7 +62,9 @@ output:
     app_id: cli_xxx
     app_secret: xxx
     folder_token: ""        # 留空则放"我的空间"根目录
-    tenant_domain: feishu.cn  # 拼接最终 URL 用,自有租户域名
+    tenant_domain: ""         # 你的租户子域名,如 abcd1234(打开任意飞书文档,
+                              # URL 里 https://<这段>.feishu.cn 就是);决定文档链接。
+                              # 填完整域名 abcd1234.feishu.cn 也行。留空则用通用 feishu.cn
   notion:                   # Notion(可选):每篇写入一个数据库,带平台/时长/日期属性
     enabled: false
     token: secret_xxx       # Notion internal integration token

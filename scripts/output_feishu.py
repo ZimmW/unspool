@@ -294,7 +294,7 @@ def upload(*, markdown: str, filename: str, feishu_cfg: dict) -> str:
     """建 docx + 写入 markdown,返回文档 URL。"""
     token = _token(feishu_cfg["app_id"], feishu_cfg["app_secret"])
     folder = feishu_cfg.get("folder_token") or ""
-    tenant = feishu_cfg.get("tenant_domain") or "feishu.cn"
+    host = _feishu_host(feishu_cfg.get("tenant_domain"))
 
     title, top = _md_to_nodes(markdown)
 
@@ -306,4 +306,19 @@ def upload(*, markdown: str, filename: str, feishu_cfg: dict) -> str:
 
     _write_nodes(token, doc_id, top)
 
-    return f"https://{tenant}.feishu.cn/docx/{doc_id}"
+    return f"https://{host}/docx/{doc_id}"
+
+
+def _feishu_host(tenant_domain: str | None) -> str:
+    """把 tenant_domain 归一化成完整 host,两种写法都兼容,永不重复拼接。
+
+    - "kcnxxkvpbzyk"          → "kcnxxkvpbzyk.feishu.cn"(子域名,补 .feishu.cn)
+    - "kcnxxkvpbzyk.feishu.cn"→ 原样(已是完整域名)
+    - "abc.larksuite.com"     → 原样(Lark 国际版)
+    - 空 / "feishu.cn"        → "feishu.cn"(兜底,不再拼成 feishu.cn.feishu.cn)
+    """
+    t = (tenant_domain or "").strip().replace("https://", "").replace(
+        "http://", "").strip("/")
+    if not t or t in ("feishu.cn", "larksuite.com"):
+        return t or "feishu.cn"
+    return t if "." in t else f"{t}.feishu.cn"
