@@ -1,9 +1,12 @@
 """调用 Claude 把 transcript + 章节信息转成最终 Markdown 文档。"""
 from __future__ import annotations
 
+import os
 import re
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from .chapters import Chapter
@@ -302,6 +305,8 @@ def build_doc(
 
     start_time: process 起始的 time.time(),用于在文档头记录"运行时长"。
     """
+    _diagnose_coverage(transcript, duration)
+
     llm = _LLM(llm_cfg)
 
     # 先生成正文(这是耗时大头),再算运行时长,保证时长涵盖文档生成
@@ -319,6 +324,38 @@ def build_doc(
     )
 
     return f"{header}\n\n---\n\n{body.strip()}\n"
+
+
+def _diagnose_coverage(transcript: Transcript, duration: int) -> None:
+    """打印转录覆盖诊断,帮助定位"内容缺失"到底出在 ASR 还是 LLM。
+
+    - 末段时间戳远小于视频时长,或段间出现大空隙 → ASR 阶段丢了(分片失败/解析漏)
+    - 覆盖完整但最终文档缺内容 → LLM 阶段丢了(总结时跳过)
+    设 UNSPOOL_DEBUG=1 可把完整原始转录导出到 ~/.总裁速览/debug/ 供逐字核对。
+    """
+    segs = transcript.segments
+    if not segs:
+        return
+    starts = sorted(s.start for s in segs)
+    first, last = starts[0], starts[-1]
+    maxgap = max((b - a for a, b in zip(starts, starts[1:])), default=0.0)
+    print(f"      转录覆盖:{len(segs)} 段,{_fmt_ts(first)}–{_fmt_ts(last)}"
+          f"(视频 {_fmt_duration(duration)}),最大段间空隙 {_fmt_ts(maxgap)}",
+          file=sys.stderr)
+    if duration and (last < duration * 0.85 or maxgap > 120):
+        print("      ⚠ 转录覆盖不足或中间有大空隙 → 疑似 ASR 分片丢失"
+              "(请确认已 git pull 最新版;或设 UNSPOOL_DEBUG=1 重跑导出转录核对)",
+              file=sys.stderr)
+
+    if os.getenv("UNSPOOL_DEBUG"):
+        try:
+            dbg = Path.home() / ".总裁速览" / "debug"
+            dbg.mkdir(parents=True, exist_ok=True)
+            p = dbg / f"{datetime.now():%Y%m%d_%H%M%S}_transcript.txt"
+            p.write_text(transcript.to_prompt_text(), encoding="utf-8")
+            print(f"      [debug] 完整原始转录已导出:{p}", file=sys.stderr)
+        except Exception as e:
+            print(f"      [debug] 转录导出失败: {e}", file=sys.stderr)
 
 
 def _strip_generated_header(body: str) -> str:
