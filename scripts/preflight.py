@@ -81,6 +81,9 @@ def preflight(url: str, config_path: str | None = None) -> None:
 
     print(f"SOURCE: {plat} · {uploader or '—'} · {_fmt_min(dur)} · "
           f"{'有字幕' if has_sub else '无字幕'}")
+    if not has_sub:
+        # 事前成本可见:无字幕 → 要 ASR(按音频时长计费),agent 把这行转述给用户
+        print(f"ASR_NEEDED: ~{_fmt_min(dur)} 音频需语音转写(按音频时长计费)")
 
     # 规则 1:短内容直接干
     if dur < THIRTY_MIN:
